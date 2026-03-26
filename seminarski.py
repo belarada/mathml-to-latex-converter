@@ -1,25 +1,15 @@
 import re, sys
 
-# mapa koja preslikava tag u mathml-u u par u latexu - neophodno je da bude par, jer u latexu imamo otvarajuci i zatvarajuci deo
-# kroz program cemo otvaranje i zatvaranje resiti koriscenjem steka
 TAG_MAP = {
     "mfrac":      ("\\frac{", "}{"),
-    "msup":       ("^{",      "}"),
-    "msub":       ("_{",      "}"),
-    "msubsup":    ("_{",      "}^{}"),
     "msqrt":      ("\\sqrt{", "}"),
-    "mtable":     ("\\begin{bmatrix}", "\\end{bmatrix}"),
-    "mtd":        ("",        " & "),
-    "mtr":        ("",        " \\\\ "),
-    # ovde je drugi element u paru "" jer nema zatvaranja u latexu
-    "msin":       ("\\sin",   ""),
-    "mcos":       ("\\cos",   ""),
-    "munder":     ("\\underbrace{", "}"),
-    "mover":      ("\\overrightarrow{", "}"),
-    "munderover": ("_{",      "}^{}")
+    "mtable":     ("\\begin{bmatrix}", "\\end{mbmatrix}"),
+    "mtd":        ("", " & "),
+    "mtr":        ("", " \\\\ "),
+    "msin":       ("\\sin", ""),
+    "mcos":       ("\\cos", "")
 }
 
-# mapa koja ce entitete slikati u odgovarajuci latex format
 ENTITET_MAP = {
     "&sum;":           "\\sum",
     "&int;":           "\\int",
@@ -34,8 +24,6 @@ ENTITET_MAP = {
     "&beta;":          "\\beta",
 }
 
-# primetiti da sam ovde umesto mape koristila listu - razlog lezi u hijerarhiji koja u ovom slucaju postoji
-# naime, vrlo je vazno da ENTITET prepoznamo pre IDENT
 PRAVILA = [
     ("OTVARAJUCI_TAG", r"<[a-zA-Z]+[^>]*>"),
     ("ZATVARAJUCI_TAG", r"</[a-zA-Z]+>"),
@@ -47,33 +35,25 @@ PRAVILA = [
     ("SIMBOL",          r"[(){}[\]]")
 ]
 
-# ulazni tekst u mathml tokenizujemo
 def tokenizuj(ulazni_tekst):
-    # pravimo listu parova i kompajliranog regexa koje smo definisali iznad
     kompajlirana = [(tip, re.compile(pat)) for tip, pat in PRAVILA]
     pozicija = 0
-    # lista prepoznatih tokena
     tokeni = []
     while pozicija < len(ulazni_tekst):
         pronadjen = False
-        # za svaki od napravljenih paterna unutar liste kompajlirana proveravamo da li trenutni string zadovoljava taj patern
         for tip, pattern in kompajlirana:
             m = pattern.match(ulazni_tekst, pozicija)
             if m:
                 pronadjen = True
-                # beline cemo ignorisati, jer u latexu beline nisu vazne
                 if tip != "PRAZNO":
                     tokeni.append((tip, m.group()))
-                # nastavljamo od pozicije kraja pronadjenog paterna
                 pozicija = m.end()
                 break
         if not pronadjen:
             tokeni.append(("NEPOZNATO", ulazni_tekst[pozicija]))
-            # nastavljamo od sledece pozicije jer nismo prepoznali nijedan patern za dati string
             pozicija += 1
     return tokeni
 
-# pomocna funkcija, nije lose da nam program ispise i koje tokene smo sve prepoznali
 def ispisi_tokene(tokeni):
     print(f"{'Br.':<5} {'Tip':<20} {'Vrednost'}")
     print("-" * 50)
@@ -87,27 +67,27 @@ def izvuci_ime_taga(tag_str):
 
 
 def izvuci_atribut(tag_str, naziv):
-    # f jer zelimo da se naziv menja sa konkretnim nazivom
     m = re.search(rf'{naziv}="([^"]*)"', tag_str)
     return m.group(1) if m else None
 
 
 def konvertuj(tokeni):
     izlaz = ""
-    # koristimo stek zbog pamcenja otvorenih tagova u latexu (kako bismo ih uspesno i tacno zatvarali)
     stek = []
     pozicija = 0
     while pozicija < len(tokeni):
         tip, vrednost = tokeni[pozicija]
         if tip == "OTVARAJUCI_TAG":
             tag_ime = izvuci_ime_taga(vrednost)
-            # mfenced obavija izraz u zagrade, pa nam je potrebno i da znamo koje su zagrade u pitanju
-            # podrazumevano se obavija obicnim zagradama ()
             if tag_ime == "mfenced":
-                open_br  = izvuci_atribut(vrednost, "open")  or "("
+                open_br = izvuci_atribut(vrednost, "open")  or "("
                 close_br = izvuci_atribut(vrednost, "close") or ")"
                 izlaz += "\\left" + open_br + " "
                 stek.append(("mfenced_close", close_br))
+            # poseban slucaj jer su ovo viseargumentni tagovi
+            elif tag_ime in ("msub", "msup", "msubsup", "munder", "mover", "munderover"):
+                stek.append((tag_ime, 0))
+
             elif re.match(r"m[a-z]+", tag_ime):
                 izlaz += TAG_MAP.get(tag_ime, ("", ""))[0]
                 stek.append(("tag", tag_ime))
@@ -116,14 +96,54 @@ def konvertuj(tokeni):
                 vrsta, ime = stek.pop()
                 if vrsta == "mfenced_close":
                     izlaz += " \\right" + ime
+                elif vrsta in ("msub", "msup", "msubsup", "munder", "mover", "munderover"):
+                    # ovu vrstu cemo posebno obradjivati zbog vise argumenata
+                    pass
                 else:
                     izlaz += TAG_MAP.get(ime, ("", ""))[1]
         elif tip == "ENTITET":
             izlaz += ENTITET_MAP.get(vrednost, vrednost)
         else:
             izlaz += vrednost
+
+        if stek and stek[-1][0] in ("msub", "msup", "msubsup", "munder", "mover", "munderover"):
+            vrsta, brojac = stek.pop()
+
+            if vrsta == "msub" or vrsta == "munder":
+                if brojac == 0:
+                    izlaz += "_{"
+                elif brojac == 1:
+                    izlaz += "}"
+
+            elif vrsta == "msup" or vrsta == "mover":
+                if brojac == 0:
+                    izlaz += "^{"
+                elif brojac == 1:
+                    izlaz += "}"
+
+            elif vrsta == "msubsup" or vrsta == "munderover":
+                if brojac == 0:
+                    izlaz += "_{"
+                elif brojac == 1:
+                    izlaz += "}^{"
+                elif brojac == 2:
+                    izlaz += "}"
+
+            brojac += 1
+
+            if (vrsta in ("msub", "msup", "munder", "mover") and brojac < 2) or (vrsta in ("msubsup", "munderover") and brojac < 3):
+                stek.append((vrsta, brojac))
         pozicija += 1
     return izlaz
+
+def napravi_latex_doc(formula):
+    return ("\\documentclass{article}\n"
+            "\\usepackage{amsmath}\n"
+            "\\begin{document}\n"
+            "\\[\n"
+            + formula +
+            "\n\\]\n"
+            "\\end{document}")
 
 
 def konvertuj_fajl(ulazni_fajl, izlazni_fajl):
@@ -134,10 +154,12 @@ def konvertuj_fajl(ulazni_fajl, izlazni_fajl):
     ispisi_tokene(tokeni)
 
     latex_tekst = konvertuj(tokeni)
+    latex_doc = napravi_latex_doc(latex_tekst)
 
     with open(izlazni_fajl, "w", encoding="utf-8") as f:
-        f.write(latex_tekst)
-    print("LaTeX izlaz:")
+        f.write(latex_doc)
+
+    print("LaTeX formula:")
     print(latex_tekst)
 
 
