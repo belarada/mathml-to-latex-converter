@@ -3,7 +3,7 @@ import re, sys
 TAG_MAP = {
     "mfrac":      ("\\frac{", "}{"),
     "msqrt":      ("\\sqrt{", "}"),
-    "mtable":     ("\\begin{bmatrix}", "\\end{mbmatrix}"),
+    "mtable":     ("\\begin{bmatrix}", "\\end{bmatrix}"),
     "mtd":        ("", " & "),
     "mtr":        ("", " \\\\ "),
     "msin":       ("\\sin", ""),
