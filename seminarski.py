@@ -70,71 +70,89 @@ def izvuci_atribut(tag_str, naziv):
     m = re.search(rf'{naziv}="([^"]*)"', tag_str)
     return m.group(1) if m else None
 
-
-def konvertuj(tokeni):
-    izlaz = ""
-    stek = []
-    pozicija = 0
+# argument atributi dodat je zbog prevodjenja taga mfenced - nisam zelela da izbacujem nijedan tag koji sam prvobitno ukljucila
+# uostalom, ovo pojednostavljuje dodavanje novih tagova
+def prevedi_tag(tag, deca, atributi):
+    if tag == "mfrac":
+        # mfrac -> \frac{brojilac}{imenilac}
+        if len(deca) >= 2:
+            return f"\\frac{{{deca[0]}}}{{{deca[1]}}}"
+        return deca[0] if deca else ""
+    elif tag == "msqrt":
+        return f"\\sqrt{{{deca[0]}}}" if deca else ""
+    elif tag == "mtable":
+        return f"\\begin{{matrix}}{' \\\\ '.join(deca)}\\end{{matrix}}"
+    elif tag == "mtr":
+        return " & ".join(deca)
+    elif tag == "mtd":
+        return "".join(deca)
+    elif tag == "mi":
+        # npr <mi>sin</mi> -> deca = [sin] -> trazimo sin u FUNC_MAP i dobijamo \sin
+        # ako nije u mapi (npr x, F, n , ...) -> vracamo nepromenjeno
+        sadrzaj = "".join(deca).strip()
+        return FUNC_MAP.get(sadrzaj, sadrzaj)
+    elif tag in ("msin", "mcos"):
+        return TAG_MAP[tag][0]
+    elif tag in ("msub", "msup", "munder", "mover"):
+        if len(deca) >= 2:
+            if tag == "msub":
+                return f"{deca[0]}_{{{deca[1]}}}"
+            elif tag == "msup":
+                return f"{deca[0]}^{{{deca[1]}}}"
+            elif tag == "munder":
+                return f"\\underset{{{deca[1]}}}{{{deca[0]}}}"
+            elif tag == "mover":
+                return f"\\overset{{{deca[1]}}}{{{deca[0]}}}"
+        return deca[0] if deca else ""
+    # ovi tagovi imaju troje dece npr:  \int_{0}^{\pi}
+    elif tag in ("msubsup", "munderover"):
+        if len(deca) >= 3:
+            return f"{deca[0]}_{{{deca[1]}}}^{{{deca[2]}}}"
+        elif len(deca) == 2:
+            return f"{deca[0]}_{{{deca[1]}}}"
+        return deca[0] if deca else ""
+    elif tag == "mfenced":
+        otvorena = atributi.get("open", "(")
+        zatvorena = atributi.get("close", ")")
+        sadrzaj = "".join(deca)
+        return f"\\left{otvorena} {sadrzaj} \\right{zatvorena}"
+    else:
+        return "".join(deca)
+    
+def konvertuj_rekurzivno(tokeni, pozicija):
+    # za svaki otvarajuci_tag rekurzivno obradjujemo svu decu dok ne naidjemo na zatvarajuci_tag
+    deca = []
     while pozicija < len(tokeni):
         tip, vrednost = tokeni[pozicija]
-        if tip == "OTVARAJUCI_TAG":
+        if tip == 'ZATVARAJUCI_TAG':
+            # naisli smo na kraj ovog taga - vracamo se 
+            return deca, pozicija + 1
+        elif tip == 'OTVARAJUCI_TAG':
             tag_ime = izvuci_ime_taga(vrednost)
+            atributi = {}
+            # atribute (za trenutno podrzane tagove) imamo samo za mfenced
             if tag_ime == "mfenced":
-                open_br = izvuci_atribut(vrednost, "open")  or "("
-                close_br = izvuci_atribut(vrednost, "close") or ")"
-                izlaz += "\\left" + open_br + " "
-                stek.append(("mfenced_close", close_br))
-            # poseban slucaj jer su ovo viseargumentni tagovi
-            elif tag_ime in ("msub", "msup", "msubsup", "munder", "mover", "munderover"):
-                stek.append((tag_ime, 0))
+                otvorena = izvuci_atribut(vrednost, "open")
+                zatvorena = izvuci_atribut(vrednost, "close")
+                if otvorena: atributi["open"] = otvorena
+                if zatvorena: atributi["close"] = zatvorena
+            # obradjujemo decu ovog taga
+            deca_trenutno, pozicija = konvertuj_rekurzivno(tokeni, pozicija+1)
 
-            elif re.match(r"m[a-z]+", tag_ime):
-                izlaz += TAG_MAP.get(tag_ime, ("", ""))[0]
-                stek.append(("tag", tag_ime))
-        elif tip == "ZATVARAJUCI_TAG":
-            if stek:
-                vrsta, ime = stek.pop()
-                if vrsta == "mfenced_close":
-                    izlaz += " \\right" + ime
-                elif vrsta in ("msub", "msup", "msubsup", "munder", "mover", "munderover"):
-                    # ovu vrstu cemo posebno obradjivati zbog vise argumenata
-                    pass
-                else:
-                    izlaz += TAG_MAP.get(ime, ("", ""))[1]
-        elif tip == "ENTITET":
-            izlaz += ENTITET_MAP.get(vrednost, vrednost)
+            latex = prevedi_tag(tag_ime, deca_trenutno, atributi)
+            deca.append(latex)
+        elif tip == 'ENTITET':
+            deca.append(ENTITET_MAP.get(vrednost, vrednost))
+            pozicija+=1
         else:
-            izlaz += vrednost
+            deca.append(vrednost)
+            pozicija += 1
+    return deca,pozicija
 
-        if stek and stek[-1][0] in ("msub", "msup", "msubsup", "munder", "mover", "munderover"):
-            vrsta, brojac = stek.pop()
+def konvertuj(tokeni):
+    deca, _ = konvertuj_rekurzivno(tokeni, 0)
+    return "".join(deca)
 
-            if vrsta == "msub" or vrsta == "munder":
-                if brojac == 0:
-                    izlaz += "_{"
-                elif brojac == 1:
-                    izlaz += "}"
-
-            elif vrsta == "msup" or vrsta == "mover":
-                if brojac == 0:
-                    izlaz += "^{"
-                elif brojac == 1:
-                    izlaz += "}"
-
-            elif vrsta == "msubsup" or vrsta == "munderover":
-                if brojac == 0:
-                    izlaz += "_{"
-                elif brojac == 1:
-                    izlaz += "}^{"
-                elif brojac == 2:
-                    izlaz += "}"
-
-            brojac += 1
-
-            if (vrsta in ("msub", "msup", "munder", "mover") and brojac < 2) or (vrsta in ("msubsup", "munderover") and brojac < 3):
-                stek.append((vrsta, brojac))
-        pozicija += 1
-    return izlaz
 
 def napravi_latex_doc(formula):
     return ("\\documentclass{article}\n"
