@@ -22,6 +22,7 @@ ENTITET_MAP = {
     "&infin;":         "\\infty",
     "&alpha;":         "\\alpha",
     "&beta;":          "\\beta",
+    "&phi;":           "\\phi"
 }
 
 PRAVILA = [
